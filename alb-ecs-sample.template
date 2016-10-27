@@ -1,0 +1,359 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "",
+    "Metadata": {
+
+    },
+    "Parameters": {
+      "KeyName":{
+        "Description": "SSH Key",
+        "Type": "AWS::EC2::KeyPair::KeyName"
+      },
+      "DockerImage":{
+        "Description": "Docker Image from ECR - DockerHub Example = leungty/node-app-sample:latest - ECR Example = 1234567890.dkr.ecr.us-west-2.amazonaws.com/node-app-sample:latest",
+        "Type": "String"
+      },
+      "CPort": {
+        "Description": "Your Docker container port",
+        "Type": "Number",
+        "Default": "80"
+      },
+      "NumTask": {
+        "Description": "Total Number of Tasks",
+        "Type": "Number",
+        "Default": 2
+      },
+      "InstanceType" : {
+        "Description" : "EC2 instance type",
+        "Type" : "String",
+        "Default" : "t2.micro",
+        "AllowedValues" : [ "t1.micro", "t2.nano", "t2.micro", "t2.small", "t2.medium", "t2.large", "m1.small", "m1.medium", "m1.large", "m1.xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "m3.medium", "m3.large", "m3.xlarge", "m3.2xlarge", "m4.large", "m4.xlarge", "m4.2xlarge", "m4.4xlarge", "m4.10xlarge", "c1.medium", "c1.xlarge", "c3.large", "c3.xlarge", "c3.2xlarge", "c3.4xlarge", "c3.8xlarge", "c4.large", "c4.xlarge", "c4.2xlarge", "c4.4xlarge", "c4.8xlarge", "g2.2xlarge", "g2.8xlarge", "r3.large", "r3.xlarge", "r3.2xlarge", "r3.4xlarge", "r3.8xlarge", "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge", "d2.xlarge", "d2.2xlarge", "d2.4xlarge", "d2.8xlarge", "hi1.4xlarge", "hs1.8xlarge", "cr1.8xlarge", "cc2.8xlarge", "cg1.4xlarge"],
+        "ConstraintDescription" : "must be a valid EC2 instance type."
+      }
+    },
+    "Mappings": {
+
+    },
+    "Conditions": {
+
+    },
+    "Resources": {
+      "ECSRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": 
+          {
+            "Version" : "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": [ 
+                    "ec2.amazonaws.com",
+                    "ecs.amazonaws.com",
+                    "ecs-tasks.amazonaws.com"
+                  ]
+                },
+                "Action": [ "sts:AssumeRole" ]
+              }
+            ]
+          },
+          "Path": "/",
+          "Policies": [
+            {
+              "PolicyName": "AlbECSPolicy",
+              "PolicyDocument": {
+                "Version" : "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "ec2:AuthorizeSecurityGroupIngress",
+                      "autoscaling:Describe*",
+                      "autoscaling:UpdateAutoScalingGroup",
+                      "cloudformation:CreateStack",
+                      "cloudformation:DeleteStack",
+                      "cloudformation:DescribeStack*",
+                      "cloudformation:UpdateStack",
+                      "cloudwatch:GetMetricStatistics",
+                      "ec2:Describe*",
+                      "elasticloadbalancing:*",
+                      "ecs:*",
+                      "iam:ListInstanceProfiles",
+                      "iam:ListRoles",
+                      "iam:PassRole",
+                      "ecr:GetAuthorizationToken",
+                      "ecr:BatchCheckLayerAvailability",
+                      "ecr:GetDownloadUrlForLayer",
+                      "ecr:BatchGetImage",
+                      "logs:CreateLogStream",
+                      "logs:PutLogEvents"
+                    ],
+                    "Resource": "*"
+                  }
+                ]
+              }
+            }
+          ],
+          "RoleName": "AlbECSRole"
+        }
+      },
+      "AlbVPC": {
+        "Type": "AWS::EC2::VPC",
+        "Properties": {
+          "CidrBlock": "172.20.0.0/16",
+          "InstanceTenancy": "default",
+          "EnableDnsSupport": "true",
+          "EnableDnsHostnames": "true",
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "Alb"
+            }
+          ]
+        }
+      },
+      "AlbSubnet1": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+            "AvailabilityZone": "us-west-2a",
+            "MapPublicIpOnLaunch": true,
+            "VpcId": {
+                "Ref": "AlbVPC"
+            },
+            "CidrBlock": "172.20.0.0/24"
+        }
+      },
+      "AlbSubnet2": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+            "AvailabilityZone": "us-west-2b",
+            "MapPublicIpOnLaunch": true,
+            "VpcId": {
+                "Ref": "AlbVPC"
+            },
+            "CidrBlock": "172.20.1.0/24"
+        }
+      },
+      "AlbSecurityGroup": {
+        "Type" : "AWS::EC2::SecurityGroup",
+        "Properties" : {
+           "GroupDescription" : "ALB Security Group",
+           "SecurityGroupIngress" : [ 
+             {
+                "IpProtocol" : "tcp",
+                "FromPort" : "22",
+                "ToPort" : "22",
+                "CidrIp" : "0.0.0.0/0"
+             },
+             {
+                "IpProtocol" : "tcp",
+                "FromPort" : "80",
+                "ToPort" : "80",
+                "CidrIp" : "0.0.0.0/0"
+             }
+           ],
+           "VpcId" : { "Ref": "AlbVPC" }
+        }
+      },
+      "InstanceSecurityGroup": {
+        "Type" : "AWS::EC2::SecurityGroup",
+        "Properties" : {
+           "GroupDescription" : "Instance Security Group",
+           "SecurityGroupIngress" : [ 
+             {
+                "IpProtocol" : "tcp",
+                "FromPort" : "32768",
+                "ToPort" : "61000",
+                "SourceSecurityGroupId" : { "Ref": "AlbSecurityGroup" }
+             }
+           ],
+           "VpcId" : { "Ref": "AlbVPC" }
+        }
+      },
+      "IGW": {
+        "Type": "AWS::EC2::InternetGateway",
+        "Properties": {
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "Alb"
+            }
+          ]
+        }
+      },
+      "AttachGateway": {
+        "Type": "AWS::EC2::VPCGatewayAttachment",
+        "Properties": {
+          "VpcId": { "Ref": "AlbVPC" },
+          "InternetGatewayId": { "Ref": "IGW" }
+        }
+      },
+      "RouteTable": {
+        "Type": "AWS::EC2::RouteTable",
+        "Properties": {
+          "VpcId": { "Ref": "AlbVPC" },
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "Alb"
+            }
+          ]
+        }
+      },
+      "Route1": {
+        "Type": "AWS::EC2::Route",
+        "DependsOn": "AttachGateway",
+        "Properties": {
+          "DestinationCidrBlock": "0.0.0.0/0",
+          "RouteTableId": { "Ref": "RouteTable" },
+          "GatewayId": { "Ref": "IGW" }
+        }
+      },
+      "PublicSubnetAssoc1": {
+          "Type": "AWS::EC2::SubnetRouteTableAssociation",
+          "Properties": {
+              "RouteTableId": {
+                  "Ref": "RouteTable"
+              },
+              "SubnetId": {
+                  "Ref": "AlbSubnet1"
+              }
+          }
+      },
+      "PublicSubnetAssoc2": {
+          "Type": "AWS::EC2::SubnetRouteTableAssociation",
+          "Properties": {
+              "RouteTableId": {
+                  "Ref": "RouteTable"
+              },
+              "SubnetId": {
+                  "Ref": "AlbSubnet2"
+              }
+          }
+      },
+      "InstanceProfile" : {
+         "Type": "AWS::IAM::InstanceProfile",
+         "Properties": {
+            "Path": "/",
+            "Roles": [ { "Ref": "ECSRole" } ]
+         }
+      },
+      "EC2Instance" : {
+        "Type" : "AWS::EC2::Instance",
+        "Properties" :{
+          "ImageId" : "ami-e816c088",
+          "InstanceType" : { "Ref": "InstanceType" },
+          "IamInstanceProfile" : { "Ref": "InstanceProfile" },
+          "KeyName" : { "Ref": "KeyName" },
+          "SecurityGroupIds" : [ { "Ref": "InstanceSecurityGroup" } ],
+          "SubnetId" : { "Ref": "AlbSubnet1" },
+          "UserData" : { "Fn::Base64" : { "Fn::Join" : [ "", [
+            "#!/bin/bash \n",
+            "echo ECS_CLUSTER=",
+            { "Ref": "AlbCluster" },
+            " >> /etc/ecs/ecs.config\n"
+          ]]}}
+        }
+      },
+      "Alb": {
+        "Type" : "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        "Properties" : {
+          "Name" : "alb-sample",
+          "Scheme" : "internet-facing",
+          "SecurityGroups" : [ { "Ref": "AlbSecurityGroup" } ],
+          "Subnets" : [ { "Ref": "AlbSubnet1" }, { "Ref": "AlbSubnet2"} ],
+          "Tags" : [ 
+            { 
+              "Key": "Name", 
+              "Value": "Alb" 
+            } 
+          ]
+        }
+      },
+      "AlbTargetGroup": {
+        "Type" : "AWS::ElasticLoadBalancingV2::TargetGroup",
+        "Properties" : {
+          "HealthCheckPath" : "/",
+          "HealthCheckProtocol" : "HTTP",
+          "Matcher" : { "HttpCode": "200" },
+          "Name" : "AlbTargetGroup",
+          "Port" : 80,
+          "Protocol" : "HTTP",
+          "Targets": [
+            { "Id": { "Ref": "EC2Instance" } }
+          ],
+          "Tags" : [ 
+            {
+              "Key": "Name",
+              "Value": "Alb"
+            }
+          ],
+          "VpcId" : { "Ref": "AlbVPC" }
+        }
+      },
+      "AlbListener": {
+        "Type" : "AWS::ElasticLoadBalancingV2::Listener",
+        "Properties" : {
+          "DefaultActions" : [
+            {
+              "Type": "forward",
+              "TargetGroupArn": { "Ref": "AlbTargetGroup" }
+            }
+          ],
+          "LoadBalancerArn" : { "Ref": "Alb" },
+          "Port" : 80,
+          "Protocol" : "HTTP"
+        }
+      },
+      "AlbTaskDefinition": {
+        "Type" : "AWS::ECS::TaskDefinition",
+        "Properties" : {
+          "ContainerDefinitions" : [
+            {
+              "Cpu": 128,
+              "DisableNetworking": false,
+              "Environment": [],
+              "Essential": true,
+              "Image": { "Ref": "DockerImage" },
+              "Memory": 128,
+              "Name": "alb-sample-app",
+              "PortMappings": [
+                {
+                  "HostPort": 0,
+                  "ContainerPort": 3000,
+                  "Protocol": "tcp"
+                }
+              ],
+              "VolumesFrom": [],
+            }
+          ],
+          "Volumes" : []
+        }
+      },
+      "AlbCluster": {
+        "Type": "AWS::ECS::Cluster"
+      },
+      "AlbService": {
+        "Type" : "AWS::ECS::Service",
+        "DependsOn": [ "AlbListener" ],
+        "Properties" : {
+          "Cluster" : { "Ref": "AlbCluster" },
+          "DesiredCount" : { "Ref": "NumTask" },
+          "LoadBalancers" : [ 
+            {
+              "ContainerName" : "alb-sample-app",
+              "ContainerPort" : { "Ref": "CPort" },
+              "TargetGroupArn" : { "Ref": "AlbTargetGroup"}
+            }
+          ],
+          "Role" : { "Ref": "ECSRole" },
+          "TaskDefinition" : { "Ref": "AlbTaskDefinition" }
+        }
+      }
+    },
+    "Outputs": {
+
+    }
+}
+    
